@@ -38,17 +38,6 @@ public:
     }
 
     /*!
-     * \brief fromStarted creates an ATransaction that is already in a started state.
-     *
-     * This factory is used internally when a BEGIN query has already been sent to the
-     * database (e.g. by ADatabase::beginTransaction or APool::begin) and the transaction
-     * object just needs to track that running state.
-     *
-     * \param db the database connection that issued BEGIN
-     */
-    static ATransaction fromStarted(const ADatabase &db);
-
-    /*!
      * \brief commit a transaction only if our usage count equals 1
      *
      * Because we are implicit shared we can see if this is the last
@@ -77,6 +66,7 @@ public:
     [[nodiscard]] bool isActive() const;
 
 private:
+    friend class ADatabase;
     ATransaction(const ADatabase &db, bool started);
     std::shared_ptr<ATransactionPrivate> d;
 };
