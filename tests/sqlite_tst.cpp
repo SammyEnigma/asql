@@ -25,6 +25,8 @@ public:
 
 private Q_SLOTS:
     void testQueries();
+    void testPoolBeginCommit();
+    void testPoolBeginRollback();
 };
 
 void TestSqlite::initTest()
@@ -274,6 +276,91 @@ void TestSqlite::testQueries()
         cancelatorYielded();
     }
 
+    loop.exec();
+}
+
+void TestSqlite::testPoolBeginCommit()
+{
+    QEventLoop loop;
+    {
+        auto finished = std::make_shared<QObject>();
+        connect(finished.get(), &QObject::destroyed, &loop, &QEventLoop::quit);
+
+        auto poolBeginCommit = [finished]() -> ACoroTerminator {
+            auto _ = qScopeGuard(
+                [finished] { qDebug() << "poolBeginCommit exited" << finished.use_count(); });
+
+            auto setupDb = co_await APool::database(nullptr, u"file"_s);
+            AVERIFY(setupDb);
+            auto create = co_await setupDb->exec(
+                u"CREATE TABLE IF NOT EXISTS pool_commit_test (id INTEGER)"_s);
+            AVERIFY(create);
+
+            auto t = co_await APool::begin(nullptr, u"file"_s);
+            AVERIFY(t);
+            AVERIFY(t->isActive());
+
+            auto insert = co_await t->database().exec(u"INSERT INTO pool_commit_test VALUES (1)"_s);
+            AVERIFY(insert);
+            ACOMPARE_EQ(insert->numRowsAffected(), qint64(1));
+
+            auto commitResult = co_await t->commit();
+            AVERIFY(commitResult);
+            AVERIFY(!commitResult->hasError());
+
+            auto verifyDb = co_await APool::database(nullptr, u"file"_s);
+            AVERIFY(verifyDb);
+            auto select = co_await verifyDb->exec(u"SELECT COUNT(*) FROM pool_commit_test"_s);
+            AVERIFY(select);
+            ACOMPARE_EQ((*select)[0][0].toInt(), 1);
+
+            co_await verifyDb->exec(u"DROP TABLE pool_commit_test"_s);
+        };
+        poolBeginCommit();
+    }
+    loop.exec();
+}
+
+void TestSqlite::testPoolBeginRollback()
+{
+    QEventLoop loop;
+    {
+        auto finished = std::make_shared<QObject>();
+        connect(finished.get(), &QObject::destroyed, &loop, &QEventLoop::quit);
+
+        auto poolBeginRollback = [finished]() -> ACoroTerminator {
+            auto _ = qScopeGuard(
+                [finished] { qDebug() << "poolBeginRollback exited" << finished.use_count(); });
+
+            auto setupDb = co_await APool::database(nullptr, u"file"_s);
+            AVERIFY(setupDb);
+            auto create = co_await setupDb->exec(
+                u"CREATE TABLE IF NOT EXISTS pool_rollback_test (id INTEGER)"_s);
+            AVERIFY(create);
+
+            auto t = co_await APool::begin(nullptr, u"file"_s);
+            AVERIFY(t);
+            AVERIFY(t->isActive());
+
+            auto insert =
+                co_await t->database().exec(u"INSERT INTO pool_rollback_test VALUES (42)"_s);
+            AVERIFY(insert);
+            ACOMPARE_EQ(insert->numRowsAffected(), qint64(1));
+
+            auto rollbackResult = co_await t->rollback();
+            AVERIFY(rollbackResult);
+            AVERIFY(!rollbackResult->hasError());
+
+            auto verifyDb = co_await APool::database(nullptr, u"file"_s);
+            AVERIFY(verifyDb);
+            auto select = co_await verifyDb->exec(u"SELECT COUNT(*) FROM pool_rollback_test"_s);
+            AVERIFY(select);
+            ACOMPARE_EQ((*select)[0][0].toInt(), 0);
+
+            co_await verifyDb->exec(u"DROP TABLE pool_rollback_test"_s);
+        };
+        poolBeginRollback();
+    }
     loop.exec();
 }
 

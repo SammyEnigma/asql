@@ -528,7 +528,7 @@ AExpectedTransaction APool::begin(QObject *receiver, QStringView poolName)
         if (db) {
             auto result = co_await db->begin(receiver);
             if (result) {
-                chainData->deliverDirect(ATransaction::fromStarted(db.value()));
+                chainData->deliverDirect(std::move(*result));
                 co_return;
             }
             chainData->deliverDirect(std::unexpected(result.error()));
