@@ -80,14 +80,16 @@ QString AOdbcThread::odbcError(SQLSMALLINT handleType, SQLHANDLE handle)
     SQLSMALLINT recNum = 1;
     QString result;
 
-    while (SQLGetDiagRecW(handleType,
-                          handle,
-                          recNum,
-                          state,
-                          &nativeError,
-                          msg,
-                          SQL_MAX_MESSAGE_LENGTH,
-                          &msgLen) != SQL_NO_DATA) {
+    SQLRETURN diagRet;
+    while ((diagRet = SQLGetDiagRecW(handleType,
+                                     handle,
+                                     recNum,
+                                     state,
+                                     &nativeError,
+                                     msg,
+                                     SQL_MAX_MESSAGE_LENGTH,
+                                     &msgLen)) == SQL_SUCCESS ||
+           diagRet == SQL_SUCCESS_WITH_INFO) {
         if (!result.isEmpty()) {
             result += u'\n';
         }
