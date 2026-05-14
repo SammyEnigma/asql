@@ -22,6 +22,9 @@ public:
 
 void TestTypesPostgres::initTest()
 {
+    if (!qEnvironmentVariableIsSet("ASQL_PG_TEST_DB")) {
+        QSKIP("ASQL_PG_TEST_DB not set; skipping PostgreSQL types tests");
+    }
     const QString url = qEnvironmentVariable("ASQL_PG_TEST_DB", u"postgresql:///"_s);
     APool::create(APg::factory(url));
     APool::setMaxIdleConnections(2);

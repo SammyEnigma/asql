@@ -12,6 +12,7 @@
 #include <QObject>
 #include <QStandardPaths>
 #include <QTest>
+#include <QUrl>
 
 using namespace ASql;
 using namespace Qt::Literals::StringLiterals;
@@ -36,11 +37,21 @@ void TestSqlite::initTest()
     const QString tmpDb =
         QStandardPaths::writableLocation(QStandardPaths::TempLocation) + u"/tmp.db"_s;
 
+    // Build a portable SQLite file URL.  On Windows, tmpDb starts with a
+    // drive letter ("C:/...") so naive concatenation "sqlite://" + tmpDb
+    // produces "sqlite://C:/..." where QUrl interprets "C" as the host.
+    // SQLite then receives "file://C:/..." and opens the wrong path.
+    // QUrl::fromLocalFile() always produces the correct three-slash form
+    // ("file:///C:/...") regardless of platform.
+    QUrl fileUrl = QUrl::fromLocalFile(tmpDb);
+    fileUrl.setScheme(u"sqlite"_s); // "sqlite:///C:/..." or "sqlite:///tmp/..."
+    const QString sqliteFileUrl = fileUrl.toString();
+
     APool::create(ASqlite::factory(u"sqlite://?MEMORY"_s));
     APool::setMaxIdleConnections(5);
     APool::setMaxConnections(10);
 
-    APool::create(ASqlite::factory(u"sqlite://"_s + tmpDb), u"file"_s);
+    APool::create(ASqlite::factory(sqliteFileUrl), u"file"_s);
     APool::setMaxIdleConnections(10, u"file");
 
     APool::create(ASqlite::factory(u"sqlite://?MEMORY"_s), u"pool"_s);
@@ -64,7 +75,7 @@ void TestSqlite::testQueries()
         auto finished = std::make_shared<QObject>();
         connect(finished.get(), &QObject::destroyed, &loop, &QEventLoop::quit);
 
-        auto multipleQueries = [finished]() -> ACoroTerminator {
+        auto multipleQueries = [](std::shared_ptr<QObject> finished) -> ACoroTerminator {
             auto _ = qScopeGuard(
                 [finished] { qDebug() << "multipleQueries exited" << finished.use_count(); });
 
@@ -105,9 +116,9 @@ void TestSqlite::testQueries()
 
             AVERIFY(columns.isEmpty());
         };
-        multipleQueries();
+        multipleQueries(finished);
 
-        auto multipleCreateQueries = [finished]() -> ACoroTerminator {
+        auto multipleCreateQueries = [](std::shared_ptr<QObject> finished) -> ACoroTerminator {
             auto _ = qScopeGuard(
                 [finished] { qDebug() << "multipleQueries exited" << finished.use_count(); });
 
@@ -132,9 +143,10 @@ void TestSqlite::testQueries()
 
             AVERIFY(queries.isEmpty());
         };
-        multipleCreateQueries();
+        multipleCreateQueries(finished);
 
-        auto multipleCreateQueriesTransaction = [finished]() -> ACoroTerminator {
+        auto multipleCreateQueriesTransaction =
+            [](std::shared_ptr<QObject> finished) -> ACoroTerminator {
             auto _ = qScopeGuard(
                 [finished] { qDebug() << "multipleQueries exited" << finished.use_count(); });
 
@@ -152,9 +164,9 @@ void TestSqlite::testQueries()
             AVERIFY(result);
             ACOMPARE_EQ(result->lastResultSet(), false);
         };
-        multipleCreateQueriesTransaction();
+        multipleCreateQueriesTransaction(finished);
 
-        auto singleQuery = [finished]() -> ACoroTerminator {
+        auto singleQuery = [](std::shared_ptr<QObject> finished) -> ACoroTerminator {
             auto _ = qScopeGuard(
                 [finished] { qDebug() << "singleQuery exited" << finished.use_count(); });
 
@@ -169,9 +181,9 @@ void TestSqlite::testQueries()
             ACOMPARE_EQ((*result)[0][0].toString(), u"a"_s);
             ACOMPARE_EQ((*result)[0][1].toInt(), 1);
         };
-        singleQuery();
+        singleQuery(finished);
 
-        auto queryParams = [finished]() -> ACoroTerminator {
+        auto queryParams = [](std::shared_ptr<QObject> finished) -> ACoroTerminator {
             auto _ = qScopeGuard(
                 [finished] { qDebug() << "queryParams exited" << finished.use_count(); });
 
@@ -191,9 +203,9 @@ void TestSqlite::testQueries()
             ACOMPARE_EQ((*result)[0][0].toInt(), 1);
             ACOMPARE_EQ((*result)[0][1].toBool(), true);
         };
-        queryParams();
+        queryParams(finished);
 
-        auto queryPrepared = [finished]() -> ACoroTerminator {
+        auto queryPrepared = [](std::shared_ptr<QObject> finished) -> ACoroTerminator {
             auto _ = qScopeGuard(
                 [finished] { qDebug() << "queryPrepared exited" << finished.use_count(); });
 
@@ -209,9 +221,9 @@ void TestSqlite::testQueries()
                 ACOMPARE_EQ((*result)[0][0].toInt(), i);
             }
         };
-        queryPrepared();
+        queryPrepared(finished);
 
-        auto rowsAffected = [finished]() -> ACoroTerminator {
+        auto rowsAffected = [](std::shared_ptr<QObject> finished) -> ACoroTerminator {
             auto _ = qScopeGuard(
                 [finished] { qDebug() << "rowsAffected exited" << finished.use_count(); });
 
@@ -251,9 +263,9 @@ void TestSqlite::testQueries()
             AVERIFY(result);
             ACOMPARE_EQ(result->numRowsAffected(), 6);
         };
-        rowsAffected();
+        rowsAffected(finished);
 
-        auto cancelator = [finished]() -> ACoroTerminator {
+        auto cancelator = [](std::shared_ptr<QObject> finished) -> ACoroTerminator {
             auto _ = qScopeGuard(
                 [finished] { qDebug() << "cancelator exited" << finished.use_count(); });
 
@@ -262,9 +274,9 @@ void TestSqlite::testQueries()
             auto result = co_await APool::exec("SELECT 1", cancelator);
             Q_ASSERT_X(true, "cancelator", "Coroutine must not be called");
         };
-        cancelator();
+        cancelator(finished);
 
-        auto cancelatorYielded = [finished]() -> ACoroTerminator {
+        auto cancelatorYielded = [](std::shared_ptr<QObject> finished) -> ACoroTerminator {
             auto _ = qScopeGuard(
                 [finished] { qDebug() << "cancelatorYielded exited" << finished.use_count(); });
 
@@ -275,7 +287,7 @@ void TestSqlite::testQueries()
             auto result = co_await APool::exec("SELECT 1", cancelator);
             Q_ASSERT_X(true, "cancelatorYielded", "Coroutine must not be called");
         };
-        cancelatorYielded();
+        cancelatorYielded(finished);
     }
 
     loop.exec();
@@ -288,7 +300,7 @@ void TestSqlite::testPoolBeginCommit()
         auto finished = std::make_shared<QObject>();
         connect(finished.get(), &QObject::destroyed, &loop, &QEventLoop::quit);
 
-        auto poolBeginCommit = [finished]() -> ACoroTerminator {
+        auto poolBeginCommit = [](std::shared_ptr<QObject> finished) -> ACoroTerminator {
             auto _ = qScopeGuard(
                 [finished] { qDebug() << "poolBeginCommit exited" << finished.use_count(); });
 
@@ -318,7 +330,7 @@ void TestSqlite::testPoolBeginCommit()
 
             co_await verifyDb->exec(u"DROP TABLE pool_commit_test"_s);
         };
-        poolBeginCommit();
+        poolBeginCommit(finished);
     }
     loop.exec();
 }
@@ -330,7 +342,7 @@ void TestSqlite::testPoolBeginRollback()
         auto finished = std::make_shared<QObject>();
         connect(finished.get(), &QObject::destroyed, &loop, &QEventLoop::quit);
 
-        auto poolBeginRollback = [finished]() -> ACoroTerminator {
+        auto poolBeginRollback = [](std::shared_ptr<QObject> finished) -> ACoroTerminator {
             auto _ = qScopeGuard(
                 [finished] { qDebug() << "poolBeginRollback exited" << finished.use_count(); });
 
@@ -361,7 +373,7 @@ void TestSqlite::testPoolBeginRollback()
 
             co_await verifyDb->exec(u"DROP TABLE pool_rollback_test"_s);
         };
-        poolBeginRollback();
+        poolBeginRollback(finished);
     }
     loop.exec();
 }
@@ -373,7 +385,7 @@ void TestSqlite::testDatabaseBeginCommit()
         auto finished = std::make_shared<QObject>();
         connect(finished.get(), &QObject::destroyed, &loop, &QEventLoop::quit);
 
-        auto dbBeginCommit = [finished]() -> ACoroTerminator {
+        auto dbBeginCommit = [](std::shared_ptr<QObject> finished) -> ACoroTerminator {
             auto _ = qScopeGuard(
                 [finished] { qDebug() << "dbBeginCommit exited" << finished.use_count(); });
 
@@ -404,7 +416,7 @@ void TestSqlite::testDatabaseBeginCommit()
 
             co_await verifyDb->exec(u"DROP TABLE db_commit_test"_s);
         };
-        dbBeginCommit();
+        dbBeginCommit(finished);
     }
     loop.exec();
 }
@@ -416,7 +428,7 @@ void TestSqlite::testDatabaseBeginRollback()
         auto finished = std::make_shared<QObject>();
         connect(finished.get(), &QObject::destroyed, &loop, &QEventLoop::quit);
 
-        auto dbBeginRollback = [finished]() -> ACoroTerminator {
+        auto dbBeginRollback = [](std::shared_ptr<QObject> finished) -> ACoroTerminator {
             auto _ = qScopeGuard(
                 [finished] { qDebug() << "dbBeginRollback exited" << finished.use_count(); });
 
@@ -448,7 +460,7 @@ void TestSqlite::testDatabaseBeginRollback()
 
             co_await verifyDb->exec(u"DROP TABLE db_rollback_test"_s);
         };
-        dbBeginRollback();
+        dbBeginRollback(finished);
     }
     loop.exec();
 }

@@ -17,10 +17,14 @@ class TestTypesMysql : public TestTypesBase
 public:
     void initTest() override;
     void cleanupTest() override;
+    bool supportsArbitraryBinary() const override { return false; }
 };
 
 void TestTypesMysql::initTest()
 {
+    if (!qEnvironmentVariableIsSet("ASQL_MYSQL_TEST_DB")) {
+        QSKIP("ASQL_MYSQL_TEST_DB not set; skipping MySQL types tests");
+    }
     const QString url = qEnvironmentVariable("ASQL_MYSQL_TEST_DB", u"mysql:///"_s);
     APool::create(AMysql::factory(url));
     APool::setMaxIdleConnections(2);
